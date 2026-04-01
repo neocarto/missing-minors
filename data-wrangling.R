@@ -9,7 +9,7 @@ search <- c(
 )
 
 
-data[,"name, gender, age"]
+colnames(data)
 
 
 pattern <- paste(search, collapse = "|")
@@ -18,6 +18,24 @@ filtered <- data[
   grepl(pattern, tolower(data[["name, gender, age"]])),
 ]
 
-colnames(filtered)
-View(filtered[, c("Number of deaths", "name, gender, age", "latitude","longitude")])
+
+ok <- filtered[, c("Number of deaths", "name, gender, age", "latitude","longitude")]
+
+ok$children_count <- as.numeric(
+  sub(".*(?:incl|\\(|;)\\s*(\\d+)\\s*child.*", "\\1",
+      tolower(ok[["name, gender, age"]]))
+)
+
+
+
+
+# mettre NA si pas de match
+# ok$children_count[!grepl("incl\\s*\\d+\\s*children", tolower(ok[["name, gender, age"]]))] <- NA
+
+ok$children_count[ok$`Number of deaths` == 1] <- 1
+
+View(ok)
+
+
+# Aller chercher aussi bébés et femmes enceintes
 
