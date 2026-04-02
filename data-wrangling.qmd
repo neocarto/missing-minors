@@ -1,0 +1,185 @@
+---
+title: "Missing minors"
+author: "Nicolas Lambert, Francoise Bahoken, Axelle Senou, Joelle Thollot"
+format: html
+editor: visual
+---
+
+In this notebook, we focus on children who have died during migration. To do so, we rely on data collected by the organization [United Against Racism](https://unitedagainstrefugeedeaths.eu/about-united/). This work follows on from the study day “[Geovisualizations of Migration: From Tables to Maps](https://github.com/magisAR9/JE-Geovisualisation-des-migrations)”, jointly organized by UMR 7301 Migrations internationales, espaces et sociétés (MIGRINTER) and UMR 5194 Laboratoire de science sociale (PACTE), with the support of the research initiative (Carto)graphies and (Géo)visualisation of data – AR09 (AR9) of the CNRS GdR MAGIS.
+
+## The UNITED List of Refugee Deaths
+
+The UNITED List of Refugee Deaths summarises all death cases since 1993. The data are collected through independent research, as well as information received from a network of 550 organisations in 48 countries, and from local experts, journalists, and researchers in the field of migration. An updated list is published annually in the first week of June.
+
+```{r}
+#| echo: true
+library(readxl)
+data <- data <- read_excel("unitedMorts.xlsx", col_types = "text")
+```
+
+In the dataset, there is a column "name, gender, age" that contains incomplete information about the presence of children in events that caused the deaths of migrants. This notebook aims to extract this information in order to determine the number of children who died during migration.
+
+## Data wrangling
+
+We create a field that will be used to identify events involving children.
+
+```{r}
+data$`Number of deaths` <- as.numeric(data$`Number of deaths`)
+data$children_flag <- FALSE
+data$children <- NA
+```
+
+**<ins>Step 1</ins>: Identify events involving children, babies, and pregnant women.**
+
+- We keep the rows that contain the following character strings.
+
+```{r}
+str <- c("children", "minor", "child", "boy", "girl", "teen", "baby",
+"infant", "babies", " son", "toddler")
+pattern1 =  paste(tolower(str), collapse = "|")
+cond1 <- grepl(pattern1, tolower(data$`name, gender, age`))
+```
+
+- We are trying to retrieve ages ≤ 17.
+
+```{r}
+# Pattern where age is at the end of the string.
+pattern2 <- ",\\s*(?:[0-9]|1[0-7])\\)$"
+cond2 <- grepl(pattern2, tolower(data$`name, gender, age`))
+```
+
+```{r}
+# Pattern for age ranges like "xx-yy" with xx <= 17
+pattern3 <- "\\b(?:[0-9]|1[0-7])-\\d+\\b"
+cond3 <- grepl(pattern3, data$`name, gender, age`)
+```
+
+- We apply the conditions.
+
+```{r}
+data$children_flag <- cond1 | cond2 |cond3
+```
+
+**<ins>Step 2</ins>: Estimate the number of deaths.**
+
+- If children_flag is FALSE, in that case there are zero children.
+
+```{r}
+data$children[!data$children_flag] <- 0
+```
+
+- If "children_flag" is TRUE and "Number of deaths" equals 1, then there is one child.
+
+
+```{r}
+data$children[data$children_flag & data$`Number of deaths` == 1] <- 1
+```
+
+- We retrieve the value between "incl" and "child", "boy" or "girl" or "infant"...
+
+```{r}
+na_idx <- is.na(data$children)
+data$children[na_idx] <- as.numeric(
+  sub(".*(?:incl|inck|inck.|\\(|;)\\s*(\\d+)\\s*(?:child|boy|girl|minor|young child|baby|babies|young girls|infant|teenage).*", "\\1",
+      tolower(data$`name, gender, age`[na_idx]))
+)
+```
+
+- If the string contains "incl children" (in the plural), then set the value to 2.
+
+```{r}
+na_idx <- is.na(data$children)
+data$children[na_idx] <- as.numeric(
+  sub(".*(?:incl children|\\(children;?).*", "2", tolower(data$`name, gender, age`[na_idx]))
+)
+```
+
+- Now, we define some specific rules.
+
+```{r}
+na_idx <- is.na(data$children)
+lookup <- list(
+  "incl 2 toddlers; 20 women" = 2,
+  "inlc babies, 6 child" = 8,
+  "incl child 10 & 16" = 2,
+  "her 3 children" = 3,
+  "child, 3; child, 10" = 2,
+  "mother with twin girls" = 2,
+  "girl, 3; boy 7-8" = 2,
+  "twins, boy & girl, 1 month" = 2,
+  "N.N. (child, 3; child, 4; man, 30)" = 2,
+  "N.N. (child, 4; child, 5)" = 2,
+  "N.N. (child, 3; child, 4; man, 30)" = 2,
+  "N.N. (incl baby ±3mth, child ±10)" = 2,
+  "N.N. (child, 3; child, 6; woman)" = 2,
+  "N.N. (baby, 6 m; toddler, 3; child)" = 3,
+  "N.N. (child, 3; child, 6; woman)" = 2,
+  "N.N. (young boy; teenager, boy)" =2,
+  "N.N. (young boy; teenager, boy)" =2,
+  "N.N. (incl baby ±3mth, child ±10)" = 2,
+  "N.N. (boy 14; boy 16)" = 2,
+  "N.N. (child, 4; child, 5)" = 2,
+  "N.N. (incl child, 9; child, 12; 3 w)" = 2,
+  "2 little girls" = 2,
+  "N.N. (baby, 6 m; toddler, 3; child)" = 3,
+  "2 little boys" = 2,
+  "N.N. (incl child, 9; child, 12; 3 w)" = 2,
+  "N.N. (incl child, 9; child, 12; 3 w)" = 2,
+  "N.N. (baby, 6 m; toddler, 3; child)" = 3,
+  "N.N. (12 teenagers)" = 12,
+  "N.N. (10 teenagers)" = 10,
+  "N.N. (child, 3; child, 6; woman)" = 2,
+  "all boys" = function(x) x,
+  "mostly children" = function(x) ceiling(x/2),
+  "manly children" = function(x) ceiling(x/2),
+  "incl many children" = function(x) ceiling(x/2)
+)
+for (pattern in names(lookup)) {
+  idx <- na_idx & grepl(pattern, tolower(data$`name, gender, age`))
+  value <- lookup[[pattern]]
+  if (is.function(value)) {
+    data$children[idx] <- value(data$`Number of deaths`[idx])
+  } else {
+    data$children[idx] <- value
+  }
+}
+
+```
+
+For entries containing plural nouns without any further distinction (e.g. children, infants...), set the value to 2.
+
+```{r}
+na_idx <- is.na(data$children)
+plural_idx <- na_idx & grepl(
+  "girls|boys|children|minors|babies|teens",
+  tolower(data$`name, gender, age`)
+)
+data$children[plural_idx] <- 2
+```
+
+And set the remaining ones to 1.
+
+```{r}
+data$children[is.na(data$children)] <- 1
+```
+
+## The result
+
+```{r}
+children <- data[data$children_flag == TRUE,]
+sum(children$children)
+```
+
+```{r}
+library(DT)
+
+result <- data[data$children_flag == TRUE,
+c("name, gender, age", "Number of deaths", "children_flag", "children")]
+datatable(result, options = list(pageLength = 20))
+```
+
+Export
+
+```{r}
+write.csv(data, "missing_minors.csv", row.names = FALSE)
+```
